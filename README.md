@@ -3,8 +3,9 @@
 laravel + Swoole + PHP + HTML5 + Websocket
 
 # 開關指令
-'''
-    reload_server.sh
+
     start_server.sh
+
+    reload_server.sh
+   
     stop_server.sh
-'''
