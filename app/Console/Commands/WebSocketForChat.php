@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Redis;
+
 class WebSocketForChat extends Command
 {
 
@@ -33,7 +34,6 @@ class WebSocketForChat extends Command
 
     const PROCESS_NAME = 'WebSocketForChat_JIM';
 
-    
     private $prefix = "user_id_";
 
     public function __construct()
@@ -150,9 +150,11 @@ class WebSocketForChat extends Command
         //$frame->data，数据内容，可以是文本内容也可以是二进制数据，可以通过opcode的值来判断
         //$frame->opcode，WebSocket的OpCode类型，可以参考WebSocket协议标准文档
         //$frame->finish， 表示数据帧是否完整，一个WebSocket请求可能会分成多个数据帧进行发送（底层已经实现了自动合并数据帧，现在不用担心接收到的数据帧不完整）
-        $this->info("客户端 {$frame->fd} 说:{$frame->data} (opcode:{$frame->opcode},finish:{$frame->finish})");
+        // $this->info("客户端 {$frame->fd} 说:{$frame->data} (opcode:{$frame->opcode},finish:{$frame->finish})");
         // $ws_server->push($frame->fd, '我是服务端，我已收到您的消息，您说的是：' . $frame->data);
 
+        ### client_id
+        $remote_ip = $ws_server->getClientInfo($frame->fd)['remote_ip'];
 
         $json = json_decode($frame->data, true);
 
@@ -161,75 +163,81 @@ class WebSocketForChat extends Command
             $ws_server->push($frame->fd, "This message is from swoole websocket server.");
             return;
         } else {
-           Redis::set($this->prefix . $json['id'], $frame->fd);
-           Redis::expire($this->prefix . $json['id'], 60 * 60 * 24);
+            Redis::set($this->prefix . $json['id'], $frame->fd);
+            Redis::expire($this->prefix . $json['id'], 60 * 60 * 24);
         }
-    
+
+        # redis list data
+        $redis_lists_data = json_encode([]);
+
         ### redis
         $redis_key = "";
         switch ($json['id']) {
             case '2':
                 $user_id = $json['user_id'];
-    
-                $return_fd =Redis::get($this->prefix . $user_id);
+
+                $return_fd = Redis::get($this->prefix . $user_id);
                 $__user_id = str_replace($this->prefix, "", $user_id);
-    
+
                 ###  send to ?
                 // $server->push($return_fd, $frame->data);
-    
+
                 ## 捕捉错误资讯
                 !@$ws_server->push($return_fd, $frame->data);
                 // echo $php_errormsg. $user_id. "\n";
                 // var_dump($php_errormsg);
-    
+
                 ## 如果發送   [event] => close
                 if (isset($json["data"]['event']) && $json["data"]['event'] == 'close') {
                     // $frame->data['close'] = true;
                     // print_r($frame->data);
-    
+
                     if ($php_errormsg == null) {
                         ## clear customer
                         ## customer Fd
-                       Redis::del($this->prefix . $user_id);
+                        Redis::del($this->prefix . $user_id);
                         ## customer message
-                       Redis::del($__user_id . '_msg');
+                        Redis::del($__user_id . '_msg');
                         var_dump($php_errormsg);
                     } else {
                         var_dump($php_errormsg);
                         // echo 'Y';
                     }
-    
+
                 } else if ($__user_id != "") {
-                    $redis_key = str_replace($this->prefix, "", $user_id) . '_msg';
-                   Redis::lpush($redis_key, json_encode(['c' => 2, 'msg' => $frame->data]));
+                    $redis_key        = str_replace($this->prefix, "", $user_id) . '_msg';
+                    $redis_lists_data = json_encode(['c' => 2, 'msg' => $frame->data, 'remote_ip' => $remote_ip, "time" => time()]);
+                    Redis::lpush($redis_key, $redis_lists_data);
                 }
-    
+
                 break;
             default:
-    
+
                 // $server->push($frame->fd, "This message is from swoole websocket server.");
                 // return false;
-    
-                $return_fd        =Redis::get($this->prefix . '2');
+
+                $return_fd        = Redis::get($this->prefix . '2');
                 $frame->client_id = $json['id'];
                 $redis_key        = $json['id'] . '_msg';
-    
+
                 ###  send to ?
                 @$ws_server->push($return_fd, $frame->data);
-    
+
                 if ($json["data"] != "") {
-                   Redis::lpush($redis_key, json_encode(['c' => 1, 'msg' => $frame->data]));
+                    $redis_lists_data = json_encode(['c' => 1, 'msg' => $frame->data, 'remote_ip' => $remote_ip, "time" => time()]);
+                    Redis::lpush($redis_key, $redis_lists_data);
                 }
                 break;
-    
+
         }
-        echo $redis_key . "\n";
+        // echo $redis_key . "\n"; 
+
         if ($redis_key != "") {
-           Redis::expire($redis_key, 60 * 60 * 24);
-    
+            $this->info("客户端 {$frame->fd} 说:{$frame->data} (opcode:{$frame->opcode},finish:{$frame->finish})");
+            $this->info("redis_key : {$redis_key} lpush : {$redis_lists_data} ");
+            Redis::expire($redis_key, 60 * 60 * 24);
+
         }
-
-
 
     }
 
